@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<title>Flexa</title>
+</head>
+<body style="margin:0;padding:0;background:#073440;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#073440;">You've been invited to Flexa. Your code is {{ .Token }}.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#073440;padding:32px 12px;">
+  <tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;">
+
+      <!-- brand -->
+      <tr><td align="center" style="padding-bottom:20px;">
+        <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+          <td style="background:#ffd84a;border-radius:14px;border-bottom:4px solid #d9a400;width:44px;height:44px;text-align:center;font-size:24px;line-height:44px;">&#9995;</td>
+          <td style="padding-left:12px;font-family:'Trebuchet MS','Segoe UI',Arial,Helvetica,sans-serif;font-size:30px;font-weight:800;letter-spacing:0.5px;color:#ffffff;">Flexa</td>
+        </tr></table>
+        <div style="font-family:'Trebuchet MS','Segoe UI',Arial,Helvetica,sans-serif;font-size:12px;letter-spacing:2px;color:#a9d2d6;margin-top:6px;">REHAB, LEVELED UP</div>
+      </td></tr>
+
+      <!-- card -->
+      <tr><td style="background:#ffffff;border-radius:24px;border-bottom:6px solid #cfe3e6;padding:36px 32px;font-family:'Trebuchet MS','Segoe UI',Arial,Helvetica,sans-serif;color:#04222b;">
+        <div style="font-size:12px;font-weight:800;letter-spacing:2px;color:#d85a1f;">YOU'RE INVITED</div>
+        <h1 style="margin:8px 0 14px;font-size:28px;line-height:1.2;color:#04222b;">Welcome to Flexa!</h1>
+        <p style="margin:0 0 22px;font-size:16px;line-height:1.55;color:#3f6670;">{{ if .Data.full_name }}Hi {{ .Data.full_name }},{{ else }}Hi there,{{ end }} you&rsquo;ve been invited to join Flexa{{ if .Data.role }} as a {{ .Data.role }}{{ end }}. Enter this code on the invite page, or just tap the button.</p>
+
+        <!-- code -->
+        <div style="font-size:12px;font-weight:800;letter-spacing:2px;color:#3f6670;margin-bottom:8px;">YOUR CODE</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td align="center" style="background:#fff3c4;border:3px solid #ffd84a;border-bottom:6px solid #d9a400;border-radius:18px;padding:18px 8px;font-family:'Courier New',Courier,monospace;font-size:38px;font-weight:800;letter-spacing:10px;color:#04222b;">{{ .Token }}</td>
+        </tr></table>
+        <p style="margin:10px 0 26px;font-size:13px;color:#3f6670;">This code works once and expires in 1 hour.</p>
+
+        <!-- button -->
+        <table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr>
+          <td align="center" style="background:#27e0c0;border-radius:16px;border-bottom:5px solid #12a58c;">
+            <a href="{{ if .RedirectTo }}{{ .RedirectTo }}{{ else }}{{ .SiteURL }}/accept-invite{{ end }}?token_hash={{ .TokenHash }}&amp;type=invite&amp;email={{ .Email }}" style="display:inline-block;padding:15px 34px;font-family:'Trebuchet MS','Segoe UI',Arial,Helvetica,sans-serif;font-size:17px;font-weight:800;color:#04222b;text-decoration:none;">Accept my invite</a>
+          </td>
+        </tr></table>
+
+        <p style="margin:26px 0 0;font-size:14px;line-height:1.55;color:#3f6670;">After that you&rsquo;ll pick a password and you&rsquo;re in.</p>
+      </td></tr>
+
+      <tr><td align="center" style="padding:22px 12px 0;font-family:'Trebuchet MS','Segoe UI',Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#a9d2d6;">
+        Sent by Flexa. Hand rehab that feels like a game.<br>
+        If this wasn&rsquo;t meant for you, you can safely ignore this email.
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>

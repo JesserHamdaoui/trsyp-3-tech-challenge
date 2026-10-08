@@ -1,0 +1,23 @@
+# Render blueprint for the engine (the interface goes on Vercel, see docs/deploy.md).
+# Secrets (sync: false) are entered in the Render dashboard on first deploy.
+services:
+  - type: web
+    name: flexa-engine
+    runtime: docker
+    rootDir: engine
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ENGINE_DATABASE_URL        # Supabase "Session pooler" connection string, postgresql+psycopg://...
+        sync: false
+      - key: ENGINE_SUPABASE_URL
+        sync: false
+      - key: ENGINE_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: ENGINE_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ENGINE_CORS_ORIGINS        # e.g. https://flexa.vercel.app
+        sync: false
+      - key: ENGINE_INVITE_REDIRECT_URL # e.g. https://flexa.vercel.app/accept-invite
+        sync: false

@@ -1,26 +1,32 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Fredoka, Nunito } from "next/font/google";
 import "./globals.css";
+import BrandBar from "@/components/BrandBar";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const fredoka = Fredoka({
+  variable: "--font-fredoka",
   subsets: ["latin"],
+  weight: ["500", "600", "700"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const nunito = Nunito({
+  variable: "--font-nunito",
   subsets: ["latin"],
+  weight: ["600", "700", "800"],
 });
 
 export const metadata: Metadata = {
-  title: "Rehab Engine",
-  description: "Admin, patient, and physiatrist interfaces for the rehab engine.",
+  title: "Flexa — rehab, leveled up",
+  description: "Hand rehabilitation you play. Camera-driven rehab games for patients, physiatrists and admins.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body>{children}</body>
+    <html lang="en" className={`${fredoka.variable} ${nunito.variable}`}>
+      <body>
+        <BrandBar />
+        {children}
+      </body>
     </html>
   );
 }

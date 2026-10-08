@@ -16,15 +16,15 @@ The repo has two parts:
  Browser (interface/)                                  engine/
  ┌────────────────────────────────────┐            ┌──────────────────────┐
  │ webcam ─► MediaPipe (WASM, local)  │            │ FastAPI              │
- │            │ 21 landmarks/frame    │            │  /auth  /assignments │
+ │            │ 21 landmarks/frame    │            │  /auth  /care │
  │            ▼                       │  Bearer    │  /exercises          │
  │   handFeatures.ts ─► FrameRecord[] ├──JWT──────►│  /prescriptions      │
  │            │ curls                 │  /attempts │  /attempts           │
  │            ▼                       │   /batch   └───┬──────────┬───────┘
  │   pianoGame.ts + HandTwin3D (3D)   │                │          │
- └──────────────┬─────────────────────┘          Postgres      Redis
-                │ signUp / signIn               (Supabase)   (live-attempt
-                ▼                                             frame buffer)
+ └──────────────┬─────────────────────┘          Postgres
+                │ signUp / signIn               (Supabase)
+                ▼
           Supabase Auth ──── JWKS (ES256) ────► engine verifies tokens
 ```
 
@@ -32,7 +32,8 @@ The repo has two parts:
 
 - [Architecture](docs/architecture.md): components, auth flow, the access-control model, and how an attempt moves through the system
 - [Engine API reference](docs/api.md): every endpoint, the role it requires, and its errors
-- [Data model](docs/data-model.md): Postgres tables and Redis keys
+- [Deploying for free](docs/deploy.md): Vercel + Render + Supabase
+- [Data model](docs/data-model.md): Postgres tables
 - [Frame record schema](docs/frame-schema.md): the per-frame hand-feature JSON that games submit
 - [Piano Press game](docs/piano-game.md): game rules, scoring, parameters, the 3D hand twin
 - [Status & known issues](docs/status.md): what's built, what's planned, and gaps found while documenting
@@ -40,20 +41,17 @@ The repo has two parts:
 ## Quick start
 
 You need Python 3.11+, Node 20+, a Supabase project (or the local Supabase CLI
-stack) and a Redis instance.
+stack).
 
 ```bash
-# 1. Redis (local)
-docker run -d --name rehab-redis -p 6379:6379 redis:7
-
-# 2. Engine
+# 1. Engine
 cd engine
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 touch .env          # then fill in the variables below
 uvicorn engine.main:app --reload          # http://localhost:8000, docs at /docs
 
-# 3. Interface
+# 2. Interface
 cd ../interface
 npm install
 # create .env.local (see below)
@@ -64,7 +62,6 @@ npm run dev                               # http://localhost:3000
 
 ```dotenv
 ENGINE_DATABASE_URL=postgresql+psycopg://USER:PASS@HOST:5432/postgres
-ENGINE_REDIS_URL=redis://localhost:6379/0
 ENGINE_SUPABASE_URL=https://<project-ref>.supabase.co
 ENGINE_SUPABASE_PUBLISHABLE_KEY=<publishable/anon key>
 ENGINE_SUPABASE_SERVICE_ROLE_KEY=<legacy service_role JWT>
@@ -78,8 +75,8 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<publishable/anon key>
 NEXT_PUBLIC_ENGINE_URL=http://localhost:8000
 ```
 
-Check the backend with `curl localhost:8000/health`. It reports Postgres and
-Redis connectivity.
+Check the backend with `curl localhost:8000/health`. It reports Postgres
+connectivity.
 
 ### Seeding enough data to play
 
@@ -88,8 +85,7 @@ Before Piano Press will save a session, do the following:
 
 1. Register the exercise: `POST /exercises` with `{"exercise_id": "piano_isolated_press", "display_name": "Piano Press"}`.
 2. Sign up a **physiatrist** and a **patient** through the interface.
-3. As the physiatrist, `POST /assignments {"patient_id": ...}`, then
-   `POST /prescriptions {"patient_id": ..., "exercise_id": "piano_isolated_press"}`.
+3. As the physiatrist, invite the patient (Patients page), then prescribe: `POST /prescriptions {"patient_id": ..., "exercise_id": "piano_isolated_press"}`.
 
 See [docs/api.md](docs/api.md#typical-setup-sequence) for the full curl sequence.
 
@@ -100,9 +96,9 @@ engine/
   engine/
     main.py            FastAPI app, CORS, /health, router wiring
     config.py          Settings (ENGINE_* env vars)
-    api/               Routers: auth, assignments, exercises, prescriptions, attempts
+    api/               Routers: auth, care, analytics, exercises, prescriptions, attempts
     auth/              Supabase JWT verification, role-gating deps, admin client
-    storage/           SQLModel models, Postgres session, Redis frame buffer
+    storage/           SQLModel models, Postgres session
   supabase/config.toml Supabase CLI local-stack config
   pyproject.toml
 interface/

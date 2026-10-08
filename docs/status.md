@@ -7,20 +7,19 @@ Snapshot as of commit `b3f740a` ("initiate the project").
 - Supabase-backed auth with three roles, signup from the interface, and JWKS token verification
 - Physiatrist ↔ patient assignment and exercise prescriptions
 - Exercise catalog
-- Attempt ingestion in two ways: a batch upload and a live begin/stream/end path backed by a Redis buffer
+- Attempt ingestion by one batch upload per round
 - Read access to attempts, scoped by role and assignment
+- Patient progress page: streak, week strip, accuracy chart, finger strengths, badges, current game settings and recent rounds, built on `/attempts/history` and `/attempts/next-params`
+- Physiatrist pages: overview with a triage list, patients, patient detail (progress, fingers, rounds, prescriptions) and a prescription matrix
+- Server-side analysis pipeline for Piano Press: feature extraction, deviation scoring against the idealized reference, trend and adaptation ([adaptation.md](adaptation.md))
 - Interface: role landing pages, login/signup, and the Piano Press game with in-browser MediaPipe, a feature extractor at parity with `cv-poc` and a 3D hand twin
 
 ## Planned (from code comments)
 
-1. Feature extraction on the server, to fill in `Attempt.features`
-2. Reference models built from idealized attempts
-3. Deviation scoring of patient attempts against the reference
-4. Trend tracking across attempts
-5. Aggregation
-6. Adaptation, meaning per-patient difficulty tuning of game params
-7. Live control-plane values streamed back to games (curl, grip strength, hand position)
-8. Physiatrist and admin dashboards. Both pages are login-only today.
+1. Aggregation across patients as a stored layer (the admin analytics endpoint computes it on the fly)
+2. Adaptation for games other than Piano Press (the pipeline is in place, see [adaptation.md](adaptation.md))
+3. Live control-plane values streamed back to games (curl, grip strength, hand position)
+4. Physiatrist reports/export, clinical notes and a settings override
 
 ## Issues found while documenting
 
@@ -29,11 +28,6 @@ Snapshot as of commit `b3f740a` ("initiate the project").
 - **Anyone can pick their own role.** `/auth/complete-profile` takes `role`
   from `user_metadata`, and the client sets that freely in `signUp()`. So any
   visitor can sign up as `physiatrist` or `admin`.
-- **`POST /auth/register` is unauthenticated.** It uses the service-role key
-  to create confirmed users with any role.
-- **`POST /exercises` is unauthenticated.** Anyone can add catalog entries.
-- The WebSocket token travels in the query string, so it can end up in proxy
-  and access logs.
 - The role landing pages don't check that the logged-in user's role matches
   the page. A patient can "log in" on `/admin`. The backend still enforces
   roles.
@@ -68,3 +62,7 @@ Snapshot as of commit `b3f740a` ("initiate the project").
 - `@app.on_event("startup")` is deprecated in recent FastAPI versions in
   favor of lifespan handlers.
 - CORS origins are hardcoded to localhost.
+
+
+## Pinch Flight
+Built: glove abstraction + camera simulator, game (`/patient/pinch`, `/admin/exercises/pinch`, `/admin/reference/pinch`), engine features/adaptation (docs/pinch-game.md). Exercise `pinch_flight` must exist in the catalog (registered locally). Not yet verified end-to-end in a browser with a camera.

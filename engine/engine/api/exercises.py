@@ -1,14 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
+from engine.auth.deps import require_role
 from engine.storage.db import get_session
-from engine.storage.models import Exercise
+from engine.storage.models import Exercise, Profile, UserRole
 
 router = APIRouter(prefix="/exercises", tags=["exercises"])
 
 
 @router.post("", response_model=Exercise)
-def create_exercise(exercise: Exercise, session: Session = Depends(get_session)):
+def create_exercise(
+    exercise: Exercise,
+    _admin: Profile = Depends(require_role(UserRole.admin)),
+    session: Session = Depends(get_session),
+):
     existing = session.exec(
         select(Exercise).where(Exercise.exercise_id == exercise.exercise_id)
     ).first()

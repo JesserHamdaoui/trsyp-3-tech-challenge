@@ -27,6 +27,10 @@ export interface GameParams {
   timingWindowMs: number;
   noteFallMs: number;
   sequenceLength: number;
+  /** weakest finger (from the engine's analysis): spawned more often */
+  focusFinger: Finger | null;
+  /** share of notes (0-0.4) that go to focusFinger */
+  focusBoost: number;
 }
 
 export const DEFAULT_PARAMS: GameParams = {
@@ -35,6 +39,8 @@ export const DEFAULT_PARAMS: GameParams = {
   timingWindowMs: 350,
   noteFallMs: 1800,
   sequenceLength: 16,
+  focusFinger: null,
+  focusBoost: 0,
 };
 
 export type NoteResult = "hit" | "leak" | "miss";
@@ -106,7 +112,11 @@ export function maybeSpawn(game: GameState, nowMs: number): GameState {
     return game;
   }
   if (game.nextSpawnMs !== null && nowMs >= game.nextSpawnMs) {
-    const finger = ACTIVE_FINGERS[Math.floor(Math.random() * ACTIVE_FINGERS.length)];
+    const { focusFinger, focusBoost } = game.params;
+    const finger =
+      focusFinger && Math.random() < focusBoost
+        ? focusFinger
+        : ACTIVE_FINGERS[Math.floor(Math.random() * ACTIVE_FINGERS.length)];
     const note: Note = {
       id: game.nextNoteId,
       finger,
@@ -179,4 +189,44 @@ export function currentPromptFinger(game: GameState): Finger | null {
 
 export function noteProgress(note: Note, nowMs: number): number {
   return noteY(note, nowMs);
+}
+
+export interface RoundStats {
+  hits: number;
+  leaks: number;
+  misses: number;
+  score: number;
+}
+
+export function roundAccuracy(s: Pick<RoundStats, "hits" | "leaks" | "misses">): number {
+  const total = s.hits + s.leaks + s.misses;
+  return total ? s.hits / total : 0;
+}
+
+export type NumericParamKey = Exclude<keyof GameParams, "focusFinger" | "focusBoost">;
+
+export const PARAM_LABELS: Record<NumericParamKey, { label: string; unit: string; digits: number }> = {
+  targetCurlThreshold: { label: "Curl needed", unit: "", digits: 2 },
+  isolationTolerance: { label: "Other-finger allowance", unit: "", digits: 2 },
+  timingWindowMs: { label: "Timing window", unit: "ms", digits: 0 },
+  noteFallMs: { label: "Note fall time", unit: "ms", digits: 0 },
+  sequenceLength: { label: "Notes per round", unit: "", digits: 0 },
+};
+
+export function paramsFromMeta(meta: Record<string, unknown> | undefined): GameParams | null {
+  const p = meta?.params as Partial<GameParams> | undefined;
+  if (!p) return null;
+  return normalizeParams(p);
+}
+
+/** Accepts the engine's params object (or a partial one) and fills in defaults. */
+export function normalizeParams(p: Partial<GameParams> | Record<string, unknown>): GameParams {
+  const out: GameParams = { ...DEFAULT_PARAMS };
+  const src = p as Record<string, unknown>;
+  for (const k of Object.keys(PARAM_LABELS) as NumericParamKey[]) {
+    if (typeof src[k] === "number") out[k] = src[k] as number;
+  }
+  if (typeof src.focusBoost === "number") out.focusBoost = src.focusBoost;
+  out.focusFinger = ACTIVE_FINGERS.includes(src.focusFinger as Finger) ? (src.focusFinger as Finger) : null;
+  return out;
 }

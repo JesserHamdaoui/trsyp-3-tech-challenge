@@ -22,7 +22,6 @@ with the reference, with no server-side reprocessing.
 | **Supabase Auth** | Owns identities and passwords and issues ES256-signed access tokens. |
 | **Engine (FastAPI)** | Verifies tokens, holds app data (profiles with roles, assignments, catalog, prescriptions, attempts) and enforces who can see what. |
 | **Postgres** (Supabase-hosted) | Durable storage. Tables are created at startup with `SQLModel.metadata.create_all`. There are no migrations. |
-| **Redis** (local Docker) | Short-lived buffer for frames of *live-streamed* attempts, so Postgres takes one write per attempt instead of one per frame. |
 | **Interface (Next.js)** | Role landing pages, sign-up/login and the Piano Press game. All CV runs client-side. |
 
 ## Roles
@@ -50,14 +49,7 @@ This needs email confirmation **off** (`enable_confirmations = false` in
 `supabase/config.toml`). Otherwise `signUp` returns no session and the form
 shows an error.
 
-**Secondary: server-side** `POST /auth/register`. This calls the Supabase
-Admin API with the service-role key (`email_confirm: true`) and creates the
-Profile in the same request. It's meant for admin-created accounts and tests.
-
-**Login**: the interface calls `supabase.auth.signInWithPassword` directly.
-The engine also exposes `POST /auth/login` (an OAuth2 password form that
-forwards to Supabase's token endpoint). This is what the Swagger UI
-"Authorize" button uses.
+**Login**: the interface calls `supabase.auth.signInWithPassword` directly; the engine only verifies the resulting token.
 
 **Token verification** (`engine/engine/auth/security.py`): `PyJWKClient`
 fetches Supabase's JWKS from `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`,
@@ -96,21 +88,6 @@ Piano page: every rAF tick ─► detectForVideo ─► buildFrameRecord ─► 
 Stop button ─► POST /attempts/batch {exercise_id, frames[], meta:{score,hits,leaks,misses}}
 engine: check prescription (patients) or exercise exists (admins) ─► INSERT attempt
 ```
-
-### Live streaming path (implemented in the engine, not yet used by a client)
-
-```
-POST /attempts/begin {exercise_id}         → {attempt_id}   (Redis meta key, 30-min TTL)
-WS   /attempts/{id}/stream?token=<jwt>     → client sends one JSON frame per message,
-                                              server RPUSHes to Redis, replies {"ack": n}
-POST /attempts/{id}/end {meta}             → frames LRANGE'd out, one Attempt row written,
-                                              Redis keys deleted
-```
-
-WebSocket close codes are `4401` (missing or invalid token), `4404` (unknown
-or expired attempt) and `4403` (attempt belongs to another patient). Each
-pushed frame refreshes the TTL, so an active stream never expires partway
-through. An abandoned attempt expires 30 minutes after its last frame.
 
 ## Client-side CV pipeline (interface)
 

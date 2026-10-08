@@ -77,14 +77,3 @@ Unique on `(patient_id, exercise_id)`.
 | `meta` | JSONB | game-supplied context, e.g. `{score, hits, leaks, misses}` from Piano Press |
 | `features` | JSONB, nullable | reserved for server-side feature extraction (not implemented) |
 
-## Redis keys (live-attempt buffer)
-
-Defined in `engine/engine/storage/cache.py`. All keys have a 30-minute TTL,
-which is refreshed on every pushed frame.
-
-| Key | Type | Content |
-|---|---|---|
-| `attempt:{attempt_id}:meta` | string (JSON) | `{patient_id, exercise_id, is_idealized}` |
-| `attempt:{attempt_id}:frames` | list | one JSON frame per element, in arrival order |
-
-Both keys are deleted on `POST /attempts/{id}/end`.

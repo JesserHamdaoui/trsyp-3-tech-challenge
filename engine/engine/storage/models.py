@@ -94,6 +94,8 @@ class PatientExercise(SQLModel, table=True):
     exercise_id: str = Field(index=True, foreign_key="exercise.exercise_id")
     prescribed_by_id: uuid_module.UUID = Field(foreign_key="profile.id")
     assigned_at: datetime = Field(default_factory=utcnow)
+    # "left" | "right" when the physiatrist fixes which hand the patient trains; None = the patient is asked each round
+    hand: Optional[str] = Field(default=None)
 
 
 class Attempt(SQLModel, table=True):

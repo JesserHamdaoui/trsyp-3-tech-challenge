@@ -1,43 +1,30 @@
 """
-Attempt ingestion, auth-gated, two paths:
+Attempts, auth-gated.
 
-  - Live path (the real one games use): POST /attempts/begin opens an
-    in-progress attempt and returns its id; the client then opens
-    WS /attempts/{id}/stream and pushes one JSON frame per message at full
-    sensor/CV rate (>100Hz glove, ~30fps CV) -- these are buffered in Redis
-    (engine.storage.cache), NOT written to Postgres per frame, since that
-    would be one DB round-trip per frame for no reason. POST
-    /attempts/{id}/end pulls the buffered frames back out, writes the
-    completed Attempt row to Postgres in one shot, and clears the buffer.
+POST /attempts/batch takes a whole attempt (all frames) in one request: the games record in the browser and
+submit once when the round ends. A patient must be prescribed the exercise. An admin (demonstrator role) may
+also submit is_idealized=true attempts that seed an exercise's reference; admins skip the prescription check
+and their attempts are stored with patient_id left null, since the attempt isn't tied to any patient's care.
 
-  - Batch path: POST /attempts/batch accepts a whole attempt (all frames)
-    in one request, for offline/already-recorded data (e.g. re-uploading a
-    file from the old cv-poc scripts). A patient must be prescribed the
-    exercise, same as the live path. An admin (demonstrator role) may also
-    use this path to submit is_idealized=true attempts that seed/retrain an
-    exercise's reference model -- admins skip the prescription check
-    entirely (they aren't a patient and aren't prescribed anything) and
-    their attempts are stored with patient_id left null, since the attempt
-    isn't tied to any patient's care.
-
-A patient acts only as themselves (patient_id is taken from the token,
-never trusted from the client) and only for an exercise they've actually
-been prescribed (PatientExercise). A physiatrist may only read attempts of
-a patient assigned to them (PhysiatristPatient). No feature extraction or
-scoring yet (step 2/4 of the roadmap).
+A patient acts only as themselves (patient_id is taken from the token, never trusted from the client) and only
+for an exercise they've been prescribed (PatientExercise). A physiatrist may only read attempts of a patient
+assigned to them (PhysiatristPatient). Features are extracted on write (engine/games.py picks the extractor).
 """
 
 import uuid
+from datetime import datetime
 from typing import Any, Optional
 
-import jwt
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from engine.analysis import AnalysisOut, analyze, analyze_attempt, next_params_for
+from engine.config import settings
+from engine.games import spec_for
+from engine.retention import slim_frames
 from engine.auth.deps import get_current_user, require_role
-from engine.auth.security import decode_access_token
-from engine.storage import cache
+from engine.quality import QualityReport, analyze
 from engine.storage.db import get_session
 from engine.storage.models import Attempt, Exercise, PatientExercise, PhysiatristPatient, Profile, UserRole
 
@@ -48,19 +35,6 @@ class AttemptIn(BaseModel):
     exercise_id: str
     is_idealized: bool = False
     frames: list[dict[str, Any]]
-    meta: dict[str, Any] = {}
-
-
-class BeginAttemptIn(BaseModel):
-    exercise_id: str
-    is_idealized: bool = False
-
-
-class BeginAttemptOut(BaseModel):
-    attempt_id: str
-
-
-class EndAttemptIn(BaseModel):
     meta: dict[str, Any] = {}
 
 
@@ -103,88 +77,6 @@ def _assert_prescribed(patient_id: uuid.UUID, exercise_id: str, session: Session
     return exercise
 
 
-# --- live path: begin -> stream -> end -------------------------------------
-
-
-@router.post("/begin", response_model=BeginAttemptOut)
-def begin_attempt(
-    payload: BeginAttemptIn,
-    current_user: Profile = Depends(require_role(UserRole.patient)),
-    session: Session = Depends(get_session),
-):
-    _assert_prescribed(current_user.id, payload.exercise_id, session)
-
-    attempt_id = uuid.uuid4().hex
-    cache.start_attempt_buffer(
-        attempt_id=attempt_id,
-        patient_id=str(current_user.id),
-        exercise_id=payload.exercise_id,
-        is_idealized=payload.is_idealized,
-    )
-    return BeginAttemptOut(attempt_id=attempt_id)
-
-
-@router.websocket("/{attempt_id}/stream")
-async def stream_attempt(websocket: WebSocket, attempt_id: str):
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4401)
-        return
-    try:
-        payload = decode_access_token(token)
-        user_id = str(uuid.UUID(payload["sub"]))
-    except (jwt.PyJWTError, KeyError, ValueError):
-        await websocket.close(code=4401)
-        return
-
-    meta = cache.get_attempt_meta(attempt_id)
-    if meta is None:
-        await websocket.close(code=4404)
-        return
-    if meta["patient_id"] != user_id:
-        await websocket.close(code=4403)
-        return
-
-    await websocket.accept()
-    try:
-        while True:
-            frame = await websocket.receive_json()
-            count = cache.push_frame(attempt_id, frame)
-            await websocket.send_json({"ack": count})
-    except WebSocketDisconnect:
-        pass
-
-
-@router.post("/{attempt_id}/end", response_model=Attempt)
-def end_attempt(
-    attempt_id: str,
-    payload: EndAttemptIn,
-    current_user: Profile = Depends(require_role(UserRole.patient)),
-    session: Session = Depends(get_session),
-):
-    meta = cache.get_attempt_meta(attempt_id)
-    if meta is None:
-        raise HTTPException(status_code=404, detail=f"no in-progress attempt '{attempt_id}' (never started, already ended, or expired)")
-    if meta["patient_id"] != str(current_user.id):
-        raise HTTPException(status_code=403, detail="cannot end another patient's attempt")
-
-    frames = cache.get_all_frames(attempt_id)
-
-    attempt = Attempt(
-        exercise_id=meta["exercise_id"],
-        patient_id=current_user.id,
-        is_idealized=meta["is_idealized"],
-        frames=frames,
-        meta=payload.meta,
-    )
-    session.add(attempt)
-    session.commit()
-    session.refresh(attempt)
-
-    cache.clear_attempt_buffer(attempt_id)
-    return attempt
-
-
 # --- batch path: whole attempt in one request -------------------------------
 
 
@@ -213,6 +105,12 @@ def submit_attempt_batch(
         frames=payload.frames,
         meta=payload.meta,
     )
+    try:
+        attempt.features = spec_for(payload.exercise_id).extract(payload.frames, payload.meta)
+    except Exception:  # never lose an attempt over a feature bug; features are recomputed lazily
+        attempt.features = None
+    if attempt.features and not attempt.is_idealized and settings.trim_patient_frames:
+        attempt.frames = slim_frames(attempt.frames)
     session.add(attempt)
     session.commit()
     session.refresh(attempt)
@@ -222,36 +120,149 @@ def submit_attempt_batch(
 # --- read path ---------------------------------------------------------------
 
 
+class ReferenceSummary(BaseModel):
+    id: int
+    exercise_id: str
+    created_at: datetime
+    frame_count: int
+    meta: dict[str, Any]
+    quality: QualityReport
+
+
+class BulkDeleteIn(BaseModel):
+    ids: list[int]
+
+
+class BulkDeleteOut(BaseModel):
+    deleted: int
+
+
+@router.get("/references", response_model=list[ReferenceSummary])
+def list_references(
+    exercise_id: Optional[str] = None,
+    _admin: Profile = Depends(require_role(UserRole.admin)),
+    session: Session = Depends(get_session),
+):
+    """Idealized (reference) attempts have no patient, so they can't go through
+    the assignment-based GET /attempts. Summaries only -- frames can be huge --
+    plus a recording-quality report computed from them."""
+    query = select(Attempt).where(Attempt.is_idealized == True).order_by(Attempt.created_at.desc())  # noqa: E712
+    if exercise_id:
+        query = query.where(Attempt.exercise_id == exercise_id)
+    return [
+        ReferenceSummary(
+            id=a.id,
+            exercise_id=a.exercise_id,
+            created_at=a.created_at,
+            frame_count=len(a.frames),
+            meta=a.meta,
+            quality=analyze(a.frames, a.meta),
+        )
+        for a in session.exec(query).all()
+    ]
+
+
+@router.post("/references/delete", response_model=BulkDeleteOut)
+def delete_references(
+    payload: BulkDeleteIn,
+    _admin: Profile = Depends(require_role(UserRole.admin)),
+    session: Session = Depends(get_session),
+):
+    """Bulk delete. Only idealized attempts can be removed here -- patient
+    attempts are care records and are never deletable through this route."""
+    rows = session.exec(
+        select(Attempt).where(Attempt.id.in_(payload.ids), Attempt.is_idealized == True)  # noqa: E712
+    ).all()
+    for row in rows:
+        session.delete(row)
+    session.commit()
+    return BulkDeleteOut(deleted=len(rows))
+
+
+@router.delete("/references/{attempt_id}", response_model=BulkDeleteOut)
+def delete_reference(
+    attempt_id: int,
+    _admin: Profile = Depends(require_role(UserRole.admin)),
+    session: Session = Depends(get_session),
+):
+    row = session.get(Attempt, attempt_id)
+    if not row or not row.is_idealized:
+        raise HTTPException(status_code=404, detail=f"reference {attempt_id} not found")
+    session.delete(row)
+    session.commit()
+    return BulkDeleteOut(deleted=1)
+
+
+class AttemptHistoryItem(BaseModel):
+    id: int
+    exercise_id: str
+    created_at: datetime
+    meta: dict[str, Any]
+
+
+@router.get("/history", response_model=list[AttemptHistoryItem])
+def attempt_history(
+    exercise_id: str,
+    limit: int = 10,
+    current_user: Profile = Depends(require_role(UserRole.patient)),
+    session: Session = Depends(get_session),
+):
+    """The caller's own latest attempts (newest first) without frames, so a game can show
+    previous results and adapt its parameters."""
+    rows = session.exec(
+        select(Attempt.id, Attempt.exercise_id, Attempt.created_at, Attempt.meta)
+        .where(Attempt.patient_id == current_user.id, Attempt.exercise_id == exercise_id)
+        .order_by(Attempt.created_at.desc())
+        .limit(max(1, min(limit, 50)))
+    ).all()
+    return [AttemptHistoryItem(id=r[0], exercise_id=r[1], created_at=r[2], meta=r[3] or {}) for r in rows]
+
+
+def _load_viewable(attempt_id: int, current_user: Profile, session: Session) -> Attempt:
+    attempt = session.get(Attempt, attempt_id)
+    if not attempt:
+        raise HTTPException(status_code=404, detail=f"attempt {attempt_id} not found")
+    if current_user.role == UserRole.admin and attempt.is_idealized:
+        return attempt  # admins own the reference set (e.g. to export it)
+    _assert_physiatrist_can_view(attempt.patient_id, current_user, session)
+    return attempt
+
+
+@router.get("/next-params", response_model=Optional[AnalysisOut])
+def next_params(
+    exercise_id: str,
+    current_user: Profile = Depends(require_role(UserRole.patient)),
+    session: Session = Depends(get_session),
+):
+    """Analysis of the caller's latest attempt; `adaptation.next_params` is what the next round should use.
+    `null` before the first attempt."""
+    return next_params_for(session, current_user.id, exercise_id)
+
+
+@router.post("/analyze", response_model=AnalysisOut)
+def analyze_unsaved(
+    payload: AttemptIn,
+    current_user: Profile = Depends(require_role(UserRole.admin)),
+    session: Session = Depends(get_session),
+):
+    """Analysis of frames that are not stored (an admin's practice run)."""
+    return analyze(session, exercise_id=payload.exercise_id, frames=payload.frames, meta=payload.meta)
+
+
+@router.get("/{attempt_id}/analysis", response_model=AnalysisOut)
+def attempt_analysis(
+    attempt_id: int,
+    current_user: Profile = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    return analyze_attempt(session, _load_viewable(attempt_id, current_user, session))
+
+
 @router.get("/{attempt_id}", response_model=Attempt)
 def get_attempt(
     attempt_id: int,
     current_user: Profile = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    attempt = session.get(Attempt, attempt_id)
-    if not attempt:
-        raise HTTPException(status_code=404, detail=f"attempt {attempt_id} not found")
-    _assert_physiatrist_can_view(attempt.patient_id, current_user, session)
-    return attempt
+    return _load_viewable(attempt_id, current_user, session)
 
-
-@router.get("", response_model=list[Attempt])
-def list_attempts(
-    exercise_id: Optional[str] = None,
-    patient_id: Optional[uuid.UUID] = None,
-    current_user: Profile = Depends(get_current_user),
-    session: Session = Depends(get_session),
-):
-    if current_user.role == UserRole.patient:
-        # patients only ever see their own attempts, regardless of query param
-        effective_patient_id = current_user.id
-    else:
-        if patient_id is None:
-            raise HTTPException(status_code=400, detail="physiatrist must pass patient_id")
-        _assert_physiatrist_can_view(patient_id, current_user, session)
-        effective_patient_id = patient_id
-
-    query = select(Attempt).where(Attempt.patient_id == effective_patient_id)
-    if exercise_id:
-        query = query.where(Attempt.exercise_id == exercise_id)
-    return session.exec(query).all()

@@ -7,6 +7,7 @@ relationship to already be established.
 """
 
 import uuid
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -19,9 +20,17 @@ from engine.storage.models import Exercise, PatientExercise, PhysiatristPatient,
 router = APIRouter(prefix="/prescriptions", tags=["prescriptions"])
 
 
+Hand = Optional[Literal["left", "right"]]
+
+
 class PrescribeIn(BaseModel):
     patient_id: uuid.UUID
     exercise_id: str
+    hand: Hand = None
+
+
+class HandIn(BaseModel):
+    hand: Hand = None
 
 
 class PrescriptionOut(BaseModel):
@@ -29,6 +38,13 @@ class PrescriptionOut(BaseModel):
     patient_id: uuid.UUID
     exercise_id: str
     prescribed_by_id: uuid.UUID
+    hand: Hand = None
+
+
+def _out(r: PatientExercise) -> PrescriptionOut:
+    return PrescriptionOut(
+        id=r.id, patient_id=r.patient_id, exercise_id=r.exercise_id, prescribed_by_id=r.prescribed_by_id, hand=r.hand  # type: ignore[arg-type]
+    )
 
 
 @router.post("", response_model=PrescriptionOut)
@@ -65,16 +81,12 @@ def prescribe_exercise(
         patient_id=payload.patient_id,
         exercise_id=payload.exercise_id,
         prescribed_by_id=current_user.id,
+        hand=payload.hand,
     )
     session.add(prescription)
     session.commit()
     session.refresh(prescription)
-    return PrescriptionOut(
-        id=prescription.id,
-        patient_id=prescription.patient_id,
-        exercise_id=prescription.exercise_id,
-        prescribed_by_id=prescription.prescribed_by_id,
-    )
+    return _out(prescription)
 
 
 @router.get("/my-exercises", response_model=list[PrescriptionOut])
@@ -85,29 +97,53 @@ def my_exercises(
     rows = session.exec(
         select(PatientExercise).where(PatientExercise.patient_id == current_user.id)
     ).all()
-    return [
-        PrescriptionOut(id=r.id, patient_id=r.patient_id, exercise_id=r.exercise_id, prescribed_by_id=r.prescribed_by_id)
-        for r in rows
-    ]
+    return [_out(r) for r in rows]
 
 
-@router.get("/patient/{patient_id}", response_model=list[PrescriptionOut])
-def patient_exercises(
-    patient_id: uuid.UUID,
+@router.delete("/{prescription_id}")
+def remove_prescription(
+    prescription_id: int,
     current_user: Profile = Depends(require_role(UserRole.physiatrist)),
     session: Session = Depends(get_session),
 ):
+    """Stops a prescription for a patient the caller looks after. Past attempts stay."""
+    row = session.get(PatientExercise, prescription_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="prescription not found")
     link = session.exec(
         select(PhysiatristPatient).where(
             PhysiatristPatient.physiatrist_id == current_user.id,
-            PhysiatristPatient.patient_id == patient_id,
+            PhysiatristPatient.patient_id == row.patient_id,
         )
     ).first()
     if not link:
         raise HTTPException(status_code=403, detail="patient is not assigned to this physiatrist")
+    session.delete(row)
+    session.commit()
+    return {"removed": True}
 
-    rows = session.exec(select(PatientExercise).where(PatientExercise.patient_id == patient_id)).all()
-    return [
-        PrescriptionOut(id=r.id, patient_id=r.patient_id, exercise_id=r.exercise_id, prescribed_by_id=r.prescribed_by_id)
-        for r in rows
-    ]
+
+@router.patch("/{prescription_id}/hand", response_model=PrescriptionOut)
+def set_hand(
+    prescription_id: int,
+    payload: HandIn,
+    current_user: Profile = Depends(require_role(UserRole.physiatrist)),
+    session: Session = Depends(get_session),
+):
+    """Fixes which hand the patient trains with (or clears it so the patient is asked each round)."""
+    row = session.get(PatientExercise, prescription_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="prescription not found")
+    link = session.exec(
+        select(PhysiatristPatient).where(
+            PhysiatristPatient.physiatrist_id == current_user.id,
+            PhysiatristPatient.patient_id == row.patient_id,
+        )
+    ).first()
+    if not link:
+        raise HTTPException(status_code=403, detail="patient is not assigned to this physiatrist")
+    row.hand = payload.hand
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return _out(row)

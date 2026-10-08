@@ -73,3 +73,13 @@ presses **Stop**.
   dominant skin-weight bone.
 - The parent page drives the twin through a ref handle with the method
   `update(curls, highlightFinger)`.
+
+## Full-screen flow and adaptation
+
+The game takes the whole screen: intro (previous attempts and the settings about
+to be used) -> camera warm-up -> 3-2-1 -> play -> outro animation -> results
+(this round, how it compares with the idealized reference and the previous round,
+and the settings the next round will use) -> next attempt. The hand twin is a
+draggable picture-in-picture panel. The settings come from the engine, see
+[adaptation.md](adaptation.md). `GameParams` also carries `focusFinger` and
+`focusBoost`: with that probability a note is the focus finger.

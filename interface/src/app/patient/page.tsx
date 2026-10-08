@@ -1,92 +1,91 @@
-import AuthForm from "@/components/AuthForm";
+"use client";
 
-const ASSIGNED_GAMES = [
+import { useEffect, useState } from "react";
+import { Bird, Lock, Piano } from "lucide-react";
+import RoleGate from "@/components/RoleGate";
+import { token } from "@/components/care/shared";
+import { listMyExercises } from "@/lib/engine";
+
+const GAMES = [
   {
+    exerciseId: "piano_isolated_press",
     href: "/patient/piano",
     title: "Piano Press",
     description: "Curl each finger to the target note as it reaches the line. Trains isolated finger control.",
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M7 4v10M11 4v10M15 4v10M19 4v10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    ),
+    icon: <Piano size={32} strokeWidth={2.2} />,
+  },
+  {
+    exerciseId: "pinch_flight",
+    href: "/patient/pinch",
+    title: "Pinch Flight",
+    description: "Pinch your thumb to each finger with just the right force to fly a bird through the gates. Trains grip strength and control.",
+    icon: <Bird size={32} strokeWidth={2.2} />,
   },
 ];
 
 export default function PatientPage() {
-  return (
-    <main className="page-narrow" style={{ maxWidth: 560 }}>
-      <div style={{ marginBottom: "2rem" }}>
-        <p style={{ color: "var(--accent-patient)", fontWeight: 700, fontSize: "0.85rem", letterSpacing: "0.02em" }}>
-          PATIENT
-        </p>
-        <h1 style={{ fontSize: "1.75rem", fontWeight: 700, marginTop: "0.25rem" }}>Welcome back</h1>
-      </div>
+  const [prescribed, setPrescribed] = useState<Set<string> | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-      <AuthForm role="patient">
-        {(
-          <div>
-            <p
+  useEffect(() => {
+    token()
+      .then(listMyExercises)
+      .then((rows) => setPrescribed(new Set(rows.map((r) => r.exercise_id))))
+      .catch((err) => setError(err instanceof Error ? err.message : "Could not load your games."));
+  }, []);
+
+  const mine = prescribed ? GAMES.filter((g) => prescribed.has(g.exerciseId)) : [];
+
+  return (
+    <RoleGate role="patient" title="Your games" subtitle="Pick a game to start a session.">
+      {error && <p className="form-error">{error}</p>}
+      {!prescribed && !error && (
+        <div className="game-grid" aria-busy="true">
+          {[0, 1].map((i) => (
+            <div key={i} className="card" style={{ padding: "1.5rem" }}>
+              <div className="skeleton" style={{ width: 64, height: 64 }} />
+              <div className="skeleton" style={{ height: 22, width: "50%", marginTop: 18 }} />
+              <div className="skeleton" style={{ height: 14, marginTop: 12 }} />
+            </div>
+          ))}
+        </div>
+      )}
+      {prescribed && mine.length === 0 && (
+        <div className="card" style={{ padding: "2rem", textAlign: "center", maxWidth: 520 }}>
+          <Lock size={32} strokeWidth={2.4} style={{ color: "var(--foreground-muted)" }} />
+          <p className="display" style={{ fontSize: "1.4rem", marginTop: "0.5rem" }}>No games yet</p>
+          <p style={{ color: "var(--foreground-muted)", marginTop: "0.4rem" }}>
+            Your physiatrist chooses which games you play. Once they prescribe one, it shows up here.
+          </p>
+        </div>
+      )}
+      <div className="game-grid">
+        {mine.map((game, i) => (
+          <a key={game.href} href={game.href} className="card card-link rise" style={{ padding: "1.5rem", ["--i" as string]: i }}>
+            <div
               style={{
-                fontSize: "0.8rem",
-                fontWeight: 700,
-                color: "var(--foreground-muted)",
-                letterSpacing: "0.02em",
-                marginBottom: "0.75rem",
+                width: 64,
+                height: 64,
+                borderRadius: "var(--radius-md)",
+                background: "var(--mint)",
+                color: "var(--deep-950)",
+                boxShadow: "0 5px 0 var(--mint-deep)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: "1.1rem",
               }}
             >
-              YOUR ASSIGNED GAMES
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              {ASSIGNED_GAMES.map((game) => (
-                <a
-                  key={game.href}
-                  href={game.href}
-                  className="card card-link"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.9rem",
-                    padding: "1rem",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 42,
-                      height: 42,
-                      flexShrink: 0,
-                      borderRadius: "var(--radius-sm)",
-                      background: "var(--accent-patient-soft)",
-                      color: "var(--accent-patient)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {game.icon}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: 700, fontSize: "0.95rem" }}>{game.title}</p>
-                    <p style={{ fontSize: "0.8rem", color: "var(--foreground-muted)", marginTop: "0.15rem" }}>
-                      {game.description}
-                    </p>
-                  </div>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
-                    <path
-                      d="M5 12h14M13 6l6 6-6 6"
-                      stroke="var(--foreground-muted)"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </a>
-              ))}
+              {game.icon}
             </div>
-          </div>
-        )}
-      </AuthForm>
-    </main>
+            <h2 style={{ fontSize: "1.5rem" }}>{game.title}</h2>
+            <p style={{ color: "var(--foreground-muted)", marginTop: "0.4rem", fontSize: "0.95rem" }}>{game.description}</p>
+            <span className="btn btn-go" style={{ marginTop: "1.25rem", width: "100%" }}>
+              Play
+            </span>
+          </a>
+        ))}
+      </div>
+    </RoleGate>
   );
 }
